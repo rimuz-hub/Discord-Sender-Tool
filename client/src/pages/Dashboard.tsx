@@ -3,6 +3,7 @@ import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Loader2, Eye, EyeOff, Save, Play, Square, Terminal as TerminalIcon, Settings } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 import { useAutomationStatus, useStartAutomation, useStopAutomation, useLatestConfig, useSaveConfig } from "@/hooks/use-automation";
 import { CyberCard } from "@/components/CyberCard";
