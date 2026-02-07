@@ -1,8 +1,41 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type StartRequest, type InsertConfig } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import { useAutomation } from "@/hooks/useAutomation-automation";
 
+export function useDeleteConfig() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`${api.configs.delete.path}/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete config");
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.configs.get.path] });
+      toast({
+        title: "CONFIG PURGED",
+        description: "Configuration entry deleted successfully.",
+        variant: "destructive",
+        className: "font-mono border-destructive",
+      });
+    },
+  });
+}
+
+export function useConfigs() {
+  return useQuery({
+    queryKey: [api.configs.get.path],
+    queryFn: async () => {
+      const res = await fetch(api.configs.get.path);
+      if (!res.ok) throw new Error("Failed to fetch config");
+      return api.configs.get.responses[200].parse(await res.json());
+    },
+  });
+}
 export function useAutomationStatus() {
   return useQuery({
     queryKey: [api.automation.status.path],
