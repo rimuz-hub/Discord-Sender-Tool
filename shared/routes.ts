@@ -24,6 +24,7 @@ export const api = {
         message: z.string().min(1, "Message is required"),
         channelIds: z.array(z.string()).min(1, "At least one channel ID is required"),
         delaySeconds: z.number().min(1, "Delay must be at least 1 second"),
+        imageUrls: z.array(z.string()).optional(),
       }),
       responses: {
         200: z.object({ message: z.string() }),
@@ -53,13 +54,20 @@ export const api = {
       },
     },
   },
-  // Basic CRUD for saving presets
   configs: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/configs',
+      responses: {
+        200: z.array(z.custom<typeof configs.$inferSelect>()),
+      },
+    },
     get: {
       method: 'GET' as const,
-      path: '/api/configs/latest',
+      path: '/api/configs/:id',
       responses: {
-        200: z.custom<typeof configs.$inferSelect>().nullable(),
+        200: z.custom<typeof configs.$inferSelect>(),
+        404: errorSchemas.notFound,
       },
     },
     save: {
@@ -70,6 +78,23 @@ export const api = {
         200: z.custom<typeof configs.$inferSelect>(),
       },
     },
+    delete: {
+      method: 'DELETE' as const,
+      path: '/api/configs/:id',
+      responses: {
+        204: z.void(),
+        404: errorSchemas.notFound,
+      },
+    },
+  },
+  upload: {
+    images: {
+      method: 'POST' as const,
+      path: '/api/upload/images',
+      responses: {
+        200: z.object({ urls: z.array(z.string()) }),
+      },
+    }
   }
 };
 

@@ -10,6 +10,7 @@ export const configs = pgTable("configs", {
   message: text("message").notNull(),
   channelIds: text("channel_ids").notNull(), // Stored as comma-separated string
   delaySeconds: integer("delay_seconds").notNull().default(60),
+  imageUrls: text("image_urls"), // Comma-separated or JSON array of image URLs
   isRunning: boolean("is_running").default(false),
   lastRunAt: timestamp("last_run_at"),
 });
@@ -29,6 +30,7 @@ export type StartRequest = {
   message: string;
   channelIds: string[]; // Sent as array for API
   delaySeconds: number;
+  imageUrls?: string[];
 };
 
 export type LogEntry = {

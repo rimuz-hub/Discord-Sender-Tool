@@ -7,17 +7,19 @@ import {
 import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
-  getLatestConfig(): Promise<Config | undefined>;
+  getAllConfigs(): Promise<Config[]>;
+  getConfig(id: number): Promise<Config | undefined>;
   saveConfig(config: InsertConfig): Promise<Config>;
+  deleteConfig(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
-  async getLatestConfig(): Promise<Config | undefined> {
-    const [config] = await db
-      .select()
-      .from(configs)
-      .orderBy(desc(configs.id))
-      .limit(1);
+  async getAllConfigs(): Promise<Config[]> {
+    return await db.select().from(configs).orderBy(desc(configs.id));
+  }
+
+  async getConfig(id: number): Promise<Config | undefined> {
+    const [config] = await db.select().from(configs).where(eq(configs.id, id));
     return config;
   }
 
@@ -27,6 +29,10 @@ export class DatabaseStorage implements IStorage {
       .values(insertConfig)
       .returning();
     return config;
+  }
+
+  async deleteConfig(id: number): Promise<void> {
+    await db.delete(configs).where(eq(configs.id, id));
   }
 }
 
