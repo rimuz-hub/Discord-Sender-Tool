@@ -3,10 +3,27 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import fetch from "node-fetch"; // Assuming node-fetch or global fetch is available. Node 18+ has global fetch.
+import fetch from "node-fetch";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import express from "express";
 
-// --- Automation Manager ---
-// Keeps track of the active interval and logs
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: "client/public/uploads/",
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      cb(null, file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname));
+    },
+  }),
+});
+
+// Ensure upload directory exists
+if (!fs.existsSync("client/public/uploads/")) {
+  fs.mkdirSync("client/public/uploads/", { recursive: true });
+}
+
 type LogEntry = {
   id: string;
   timestamp: string;
@@ -20,13 +37,8 @@ class AutomationManager {
   private logs: LogEntry[] = [];
   private maxLogs: number = 100;
 
-  constructor() {}
-
   getStatus() {
-    return {
-      isRunning: this.isRunning,
-      logs: this.logs
-    };
+    return { isRunning: this.isRunning, logs: this.logs };
   }
 
   addLog(type: 'info' | 'success' | 'error', message: string) {
@@ -37,9 +49,7 @@ class AutomationManager {
       message
     };
     this.logs.push(entry);
-    if (this.logs.length > this.maxLogs) {
-      this.logs.shift(); // Remove oldest
-    }
+    if (this.logs.length > this.maxLogs) this.logs.shift();
   }
 
   stop() {
@@ -51,111 +61,119 @@ class AutomationManager {
     this.addLog('info', 'Automation stopped.');
   }
 
-  start(token: string, message: string, channelIds: string[], delaySeconds: number) {
-    if (this.isRunning) {
-      this.stop();
-    }
-
+  start(token: string, message: string, channelIds: string[], delaySeconds: number, imageUrls: string[] = []) {
+    if (this.isRunning) this.stop();
     this.isRunning = true;
-    this.logs = []; // Clear logs on new start? Or keep history? Let's clear for fresh view.
+    this.logs = [];
     this.addLog('info', `Starting automation. Delay: ${delaySeconds}s. Channels: ${channelIds.length}`);
 
     const runLoop = async () => {
       if (!this.isRunning) return;
-      
       this.addLog('info', `Executing cycle...`);
       
       for (const channelId of channelIds) {
         if (!this.isRunning) break;
-
         try {
-          const response = await fetch(`https://discord.com/api/v9/channels/${channelId.trim()}/messages`, {
-            method: 'POST',
-            headers: {
-              'Authorization': token,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ content: message })
-          });
+          // Attempt with images first if any
+          let success = false;
+          if (imageUrls.length > 0) {
+            // In a real scenario, we'd use FormData to send files to Discord.
+            // For simplicity in this environment, we'll try to send them as embeds or attachments.
+            // User token "self-botting" often uses a specific JSON structure.
+            const response = await fetch(`https://discord.com/api/v9/channels/${channelId.trim()}/messages`, {
+              method: 'POST',
+              headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                content: message,
+                embeds: imageUrls.map(url => ({ image: { url: `${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co${url}` } }))
+              })
+            });
 
-          if (response.ok) {
-            this.addLog('success', `Sent to ${channelId}`);
-          } else {
-            const errText = await response.text();
-            this.addLog('error', `Failed ${channelId}: ${response.status} - ${errText.substring(0, 50)}...`);
-            
-            // If 401/403, maybe stop? For now, just log.
-            if (response.status === 401) {
-              this.addLog('error', 'Invalid Token. Stopping.');
-              this.stop();
-              return;
+            if (response.ok) {
+              this.addLog('success', `Sent to ${channelId} with images`);
+              success = true;
+            } else {
+              const errData: any = await response.json().catch(() => ({}));
+              if (errData.code === 50013 || response.status === 403) {
+                this.addLog('info', `No image permission in ${channelId}. Sending text only.`);
+              } else {
+                this.addLog('error', `Image send failed in ${channelId}: ${response.status}`);
+              }
+            }
+          }
+
+          if (!success) {
+            const response = await fetch(`https://discord.com/api/v9/channels/${channelId.trim()}/messages`, {
+              method: 'POST',
+              headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content: message })
+            });
+            if (response.ok) {
+              this.addLog('success', `Sent text to ${channelId}`);
+            } else {
+              this.addLog('error', `Failed ${channelId}: ${response.status}`);
             }
           }
         } catch (error: any) {
-          this.addLog('error', `Network error ${channelId}: ${error.message}`);
+          this.addLog('error', `Error ${channelId}: ${error.message}`);
         }
-        
-        // Small delay between channels to avoid instant rate limits if list is huge?
-        // User asked for "loop in x seconds", implies the *cycle* repeats every X seconds.
-        // We shouldn't wait X seconds *between* channels.
-        // But we should be careful not to spam Discord API too fast in the inner loop.
-        await new Promise(r => setTimeout(r, 500)); // 500ms safety gap between channels
+        await new Promise(r => setTimeout(r, 1000));
       }
     };
 
-    // Run immediately once
     runLoop();
-
-    // Then interval
     this.intervalId = setInterval(runLoop, delaySeconds * 1000);
   }
 }
 
 const automation = new AutomationManager();
 
-export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
-  
-  // -- Config Routes --
+export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  app.use("/uploads", express.static("client/public/uploads"));
+
+  app.get(api.configs.list.path, async (req, res) => {
+    res.json(await storage.getAllConfigs());
+  });
+
   app.get(api.configs.get.path, async (req, res) => {
-    const config = await storage.getLatestConfig();
-    res.json(config || null);
+    const config = await storage.getConfig(Number(req.params.id));
+    if (!config) return res.status(404).json({ message: "Not found" });
+    res.json(config);
   });
 
   app.post(api.configs.save.path, async (req, res) => {
     try {
       const input = api.configs.save.input.parse(req.body);
-      const config = await storage.saveConfig(input);
-      res.json(config);
-    } catch (err) {
-      if (err instanceof z.ZodError) {
-        res.status(400).json({ message: err.errors[0].message });
-      } else {
-        res.status(500).json({ message: "Internal server error" });
-      }
+      res.json(await storage.saveConfig(input));
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
     }
   });
 
-  // -- Automation Routes --
+  app.delete(api.configs.delete.path, async (req, res) => {
+    await storage.deleteConfig(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  app.post(api.upload.images.path, upload.array("images"), (req, res) => {
+    const files = req.files as Express.Multer.File[];
+    const urls = files.map(f => `/uploads/${f.filename}`);
+    res.json({ urls });
+  });
+
   app.post(api.automation.start.path, (req, res) => {
     try {
       const input = api.automation.start.input.parse(req.body);
-      automation.start(input.token, input.message, input.channelIds, input.delaySeconds);
-      res.json({ message: "Automation started" });
-    } catch (err) {
-      if (err instanceof z.ZodError) {
-        res.status(400).json({ message: err.errors[0].message });
-      } else {
-        res.status(500).json({ message: "Internal error" });
-      }
+      automation.start(input.token, input.message, input.channelIds, input.delaySeconds, input.imageUrls);
+      res.json({ message: "Started" });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
     }
   });
 
   app.post(api.automation.stop.path, (req, res) => {
     automation.stop();
-    res.json({ message: "Automation stopped" });
+    res.json({ message: "Stopped" });
   });
 
   app.get(api.automation.status.path, (req, res) => {

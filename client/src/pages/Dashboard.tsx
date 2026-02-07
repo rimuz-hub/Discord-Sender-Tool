@@ -1,36 +1,54 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Loader2, Eye, EyeOff, Save, Play, Square, Terminal as TerminalIcon, Settings } from "lucide-react";
+import { 
+  Loader2, Eye, EyeOff, Save, Play, Square, 
+  Terminal as TerminalIcon, Settings, Plus, 
+  X, FolderOpen, Smartphone, Laptop, Upload,
+  LayoutGrid
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
-import { useAutomationStatus, useStartAutomation, useStopAutomation, useLatestConfig, useSaveConfig } from "@/hooks/use-automation";
+import { 
+  useAutomationStatus, useStartAutomation, 
+  useStopAutomation, useConfigs, useSaveConfig, 
+  useDeleteConfig 
+} from "@/hooks/use-automation";
 import { CyberCard } from "@/components/CyberCard";
 import { CyberButton } from "@/components/CyberButton";
 import { CyberInput, CyberTextarea } from "@/components/CyberInput";
 import { Terminal } from "@/components/Terminal";
-import { configs } from "@shared/schema";
+import { 
+  Dialog, DialogContent, DialogHeader, 
+  DialogTitle, DialogTrigger 
+} from "@/components/ui/dialog";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
-// Form Schema
 const formSchema = z.object({
+  name: z.string().min(1, "Setup name is required"),
   token: z.string().min(1, "Discord user token is required"),
   message: z.string().min(1, "Message content is required"),
   channelIds: z.string().min(1, "At least one channel ID is required"),
-  delaySeconds: z.coerce.number().min(5, "Minimum delay is 5 seconds").max(3600, "Maximum delay is 3600 seconds"),
+  delaySeconds: z.coerce.number().min(5, "Min 5s").max(3600, "Max 3600s"),
+  imageUrls: z.array(z.string()).default([]),
 });
 
 type FormData = z.infer<typeof formSchema>;
 
 export default function Dashboard() {
+  const { toast } = useToast();
   const [showToken, setShowToken] = useState(false);
+  const [loadDialogOpen, setLoadDialogOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // Queries & Mutations
   const { data: statusData } = useAutomationStatus();
-  const { data: configData, isLoading: isLoadingConfig } = useLatestConfig();
+  const { data: configs } = useConfigs();
   const startMutation = useStartAutomation();
   const stopMutation = useStopAutomation();
   const saveMutation = useSaveConfig();
+  const deleteMutation = useDeleteConfig();
 
   const isRunning = statusData?.isRunning ?? false;
   const logs = statusData?.logs ?? [];
@@ -38,220 +56,201 @@ export default function Dashboard() {
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
+      name: "Default Config",
       token: "",
       message: "",
       channelIds: "",
       delaySeconds: 60,
+      imageUrls: [],
     },
   });
 
-  // Populate form when config loads
-  useEffect(() => {
-    if (configData) {
-      form.reset({
-        token: configData.token,
-        message: configData.message,
-        channelIds: configData.channelIds,
-        delaySeconds: configData.delaySeconds,
-      });
-    }
-  }, [configData, form]);
-
   const handleStart = async (data: FormData) => {
-    // Parse channel IDs
     const channelIdArray = data.channelIds.split(",").map(id => id.trim()).filter(id => id.length > 0);
-    
-    if (channelIdArray.length === 0) {
-      form.setError("channelIds", { message: "Invalid channel IDs format" });
-      return;
-    }
-
     startMutation.mutate({
       token: data.token,
       message: data.message,
       channelIds: channelIdArray,
       delaySeconds: data.delaySeconds,
+      imageUrls: data.imageUrls,
     });
   };
 
-  const handleStop = () => {
-    stopMutation.mutate();
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append("images", files[i]);
+    }
+
+    try {
+      const res = await fetch("/api/upload/images", {
+        method: "POST",
+        body: formData,
+      });
+      const { urls } = await res.json();
+      form.setValue("imageUrls", [...form.getValues("imageUrls"), ...urls]);
+      toast({ title: "Images uploaded successfully" });
+    } catch (err) {
+      toast({ title: "Upload failed", variant: "destructive" });
+    }
   };
 
-  const handleSave = (data: FormData) => {
-    saveMutation.mutate({
-      token: data.token,
-      message: data.message,
-      channelIds: data.channelIds,
-      delaySeconds: data.delaySeconds,
-      name: "User Config", // Default name for now
-    });
+  const removeImage = (index: number) => {
+    const current = form.getValues("imageUrls");
+    form.setValue("imageUrls", current.filter((_, i) => i !== index));
   };
 
   return (
-    <div className="min-h-screen p-4 md:p-8 relative">
+    <div className="min-h-screen bg-black text-primary p-4 lg:p-8 font-sans selection:bg-primary selection:text-black overflow-x-hidden">
       <div className="scanline" />
-      <div className="crt-flicker" />
-
-      <div className="max-w-7xl mx-auto space-y-8 relative z-10">
+      <div className="max-w-7xl mx-auto space-y-6 relative z-10">
         
-        {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-end justify-between border-b border-primary/20 pb-6 mb-8 gap-4">
-          <div>
-            <h1 className="text-3xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-primary via-white to-primary animate-pulse tracking-tighter">
-              AUTO_SENDER_V1
+        {/* Header - Mobile Responsive */}
+        <header className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-primary/20 pb-6">
+          <div className="text-center sm:text-left">
+            <h1 className="text-2xl md:text-4xl font-black tracking-tighter animate-pulse">
+              AUTO_SENDER_MOBILE_V2
             </h1>
-            <p className="text-primary/60 font-mono text-xs md:text-sm mt-2 tracking-widest uppercase">
-              // Discord Automation Protocol // User Level: Admin
-            </p>
-          </div>
-          <div className="flex items-center space-x-4 bg-black/40 p-2 rounded border border-white/5">
-            <div className="text-right">
-              <div className="text-[10px] text-muted-foreground font-mono uppercase">System Status</div>
-              <div className={cn(
-                "text-sm font-bold font-display tracking-widest",
-                isRunning ? "text-primary text-glow" : "text-muted-foreground"
-              )}>
-                {isRunning ? "ACTIVE" : "STANDBY"}
-              </div>
+            <div className="flex items-center justify-center sm:justify-start gap-2 mt-1">
+              <span className="text-[10px] uppercase tracking-widest text-primary/40">// Protocol: Stable</span>
+              <div className={cn("w-2 h-2 rounded-full", isRunning ? "bg-primary animate-ping" : "bg-muted")} />
             </div>
-            <div className={cn(
-              "w-2 h-10 w-1",
-              isRunning ? "bg-primary shadow-[0_0_10px_rgba(0,255,128,0.8)] animate-pulse" : "bg-muted"
-            )} />
+          </div>
+
+          <div className="flex gap-2 w-full sm:w-auto">
+            <Dialog open={loadDialogOpen} onOpenChange={setLoadDialogOpen}>
+              <DialogTrigger asChild>
+                <CyberButton variant="secondary" className="flex-1 sm:flex-none py-3 h-auto">
+                  <FolderOpen className="w-4 h-4 mr-2" />
+                  LOAD
+                </CyberButton>
+              </DialogTrigger>
+              <DialogContent className="bg-black border-primary/20 text-primary">
+                <DialogHeader><DialogTitle className="font-display">SAVED_CONFIGS</DialogTitle></DialogHeader>
+                <div className="space-y-2 mt-4 max-h-[60vh] overflow-y-auto pr-2">
+                  {configs?.map(c => (
+                    <div key={c.id} className="flex items-center justify-between p-3 border border-primary/10 rounded bg-white/5 hover:bg-white/10 transition-colors">
+                      <button 
+                        className="flex-1 text-left font-mono text-sm"
+                        onClick={() => {
+                          form.reset({
+                            name: c.name,
+                            token: c.token,
+                            message: c.message,
+                            channelIds: c.channelIds,
+                            delaySeconds: c.delaySeconds,
+                            imageUrls: c.imageUrls ? c.imageUrls.split(",") : [],
+                          });
+                          setLoadDialogOpen(false);
+                        }}
+                      >
+                        {c.name}
+                      </button>
+                      <button onClick={() => deleteMutation.mutate(c.id)} className="text-destructive hover:scale-110 transition-transform">
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))}
+                  {(!configs || configs.length === 0) && <p className="text-center py-8 opacity-40 font-mono text-xs">NO_CONFIGS_FOUND</p>}
+                </div>
+              </DialogContent>
+            </Dialog>
+            <CyberButton 
+              variant="primary" 
+              className="flex-1 sm:flex-none py-3 h-auto"
+              onClick={form.handleSubmit(data => {
+                saveMutation.mutate({
+                  ...data,
+                  channelIds: data.channelIds,
+                  imageUrls: data.imageUrls.join(",")
+                });
+                toast({ title: "Setup Saved" });
+              })}
+            >
+              <Save className="w-4 h-4 mr-2" />
+              SAVE
+            </CyberButton>
           </div>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* Left Column: Controls */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-5 space-y-6">
-            <CyberCard 
-              title="CONFIGURATION_MATRIX" 
-              className="h-full" 
-              variant="default"
-            >
-              <form className="space-y-6">
-                
-                {/* Token Input */}
-                <div className="space-y-2">
-                  <div className="relative">
-                    <CyberInput
-                      label="ACCESS_TOKEN"
-                      type={showToken ? "text" : "password"}
-                      placeholder="Enter user token..."
-                      error={form.formState.errors.token?.message}
-                      {...form.register("token")}
-                      disabled={isRunning}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowToken(!showToken)}
-                      className="absolute right-3 top-9 text-primary/50 hover:text-primary transition-colors"
-                    >
-                      {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground/60 font-mono italic">
-                    * Token is stored locally in encrypted storage.
-                  </p>
+            <CyberCard title="CONTROL_PANEL" className="p-4 sm:p-6">
+              <form className="space-y-5">
+                <CyberInput
+                  label="CONFIG_NAME"
+                  {...form.register("name")}
+                  className="bg-black/40 h-12"
+                />
+                <div className="relative">
+                  <CyberInput
+                    label="USER_TOKEN"
+                    type={showToken ? "text" : "password"}
+                    {...form.register("token")}
+                    className="bg-black/40 h-12 pr-12"
+                  />
+                  <button type="button" onClick={() => setShowToken(!showToken)} className="absolute right-4 top-9 text-primary/40">
+                    {showToken ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
                 </div>
-
-                {/* Message Input */}
-                <CyberTextarea
-                  label="PAYLOAD_CONTENT"
-                  placeholder="Type your message here..."
-                  rows={5}
-                  error={form.formState.errors.message?.message}
-                  {...form.register("message")}
-                  disabled={isRunning}
-                />
-
-                {/* Channel IDs */}
-                <CyberTextarea
-                  label="TARGET_CHANNELS"
-                  placeholder="123456789, 987654321, ..."
-                  rows={3}
-                  helperText="Separate multiple IDs with commas"
-                  error={form.formState.errors.channelIds?.message}
-                  {...form.register("channelIds")}
-                  disabled={isRunning}
-                />
-
-                {/* Delay Slider */}
-                <div className="space-y-4 pt-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-display font-bold text-primary/80 uppercase tracking-widest">
-                      LOOP_INTERVAL (SEC)
-                    </label>
-                    <span className="font-mono text-primary text-sm font-bold bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
-                      {form.watch("delaySeconds")}s
-                    </span>
+                <CyberTextarea label="MESSAGE" rows={4} {...form.register("message")} className="bg-black/40" />
+                <CyberTextarea label="TARGET_CHANNELS" rows={2} helperText="Comma separated IDs" {...form.register("channelIds")} className="bg-black/40" />
+                
+                <div className="space-y-3">
+                  <div className="flex justify-between text-[10px] font-bold tracking-widest">
+                    <span>DELAY_INTERVAL</span>
+                    <span className="text-primary">{form.watch("delaySeconds")}S</span>
                   </div>
-                  <Controller
-                    name="delaySeconds"
-                    control={form.control}
-                    render={({ field }) => (
-                      <input
-                        type="range"
-                        min="5"
-                        max="3600"
-                        step="1"
-                        className="w-full h-2 bg-black/40 rounded-lg appearance-none cursor-pointer border border-white/10 accent-primary"
-                        {...field}
-                        disabled={isRunning}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
-                      />
-                    )}
+                  <input 
+                    type="range" min="5" max="3600" 
+                    className="w-full h-1.5 bg-primary/10 rounded-full appearance-none accent-primary cursor-pointer"
+                    value={form.watch("delaySeconds")}
+                    onChange={e => form.setValue("delaySeconds", Number(e.target.value))}
                   />
                 </div>
 
-                {/* Action Buttons */}
-                <div className="pt-4 grid grid-cols-2 gap-4">
-                  <CyberButton 
-                    type="button"
-                    variant="secondary"
-                    className="w-full col-span-2"
-                    onClick={form.handleSubmit(handleSave)}
-                    isLoading={saveMutation.isPending}
-                    disabled={isRunning}
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    SAVE_CONFIG
-                  </CyberButton>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold tracking-widest uppercase">Attachments</label>
+                    <CyberButton 
+                      type="button" size="sm" variant="secondary" 
+                      className="h-8 text-[10px]"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> ADD_IMG
+                    </CyberButton>
+                    <input type="file" multiple accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {form.watch("imageUrls").map((url, i) => (
+                      <div key={i} className="relative aspect-square rounded border border-primary/20 bg-black overflow-hidden group">
+                        <img src={url} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                        <button onClick={() => removeImage(i)} className="absolute top-1 right-1 bg-black/80 rounded-full p-0.5 text-destructive">
+                          <X size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
-                  <CyberButton
-                    type="button"
-                    variant="primary"
-                    className="w-full"
-                    onClick={form.handleSubmit(handleStart)}
-                    isLoading={startMutation.isPending}
-                    disabled={isRunning}
-                  >
-                    <Play className="w-4 h-4 mr-2" />
-                    INITIATE
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                  <CyberButton variant="primary" className="py-4 h-auto text-sm" onClick={form.handleSubmit(handleStart)} disabled={isRunning}>
+                    <Play className="w-4 h-4 mr-2" /> INITIATE
                   </CyberButton>
-
-                  <CyberButton
-                    type="button"
-                    variant="destructive"
-                    className="w-full"
-                    onClick={handleStop}
-                    disabled={!isRunning || stopMutation.isPending}
-                  >
-                    <Square className="w-4 h-4 mr-2 fill-current" />
-                    ABORT
+                  <CyberButton variant="destructive" className="py-4 h-auto text-sm" onClick={() => stopMutation.mutate()} disabled={!isRunning}>
+                    <Square className="w-4 h-4 mr-2" /> ABORT
                   </CyberButton>
                 </div>
               </form>
             </CyberCard>
           </div>
 
-          {/* Right Column: Terminal */}
-          <div className="lg:col-span-7 h-[600px] lg:h-auto min-h-[500px]">
-             <Terminal logs={logs} isRunning={isRunning} />
+          <div className="lg:col-span-7 h-[400px] lg:h-auto min-h-[400px]">
+            <Terminal logs={logs} isRunning={isRunning} />
           </div>
-
         </div>
       </div>
     </div>
