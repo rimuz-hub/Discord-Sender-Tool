@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type StartRequest, type InsertConfig } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
+import { useAutomation } from "@/hooks/useAutomation-automation";
 
 export function useAutomationStatus() {
   return useQuery({
